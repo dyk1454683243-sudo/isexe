@@ -1,10 +1,10 @@
 export interface IsexeOptions {
   /**
    * Ignore errors arising from attempting to get file access status
-   * Note that EACCES is always ignored, because that just means
-   * it's not executable. If this is not set, then attempting to check
-   * the executable-ness of a nonexistent file will raise ENOENT, for
-   * example.
+   * Note that EACCES/EPERM from stat fall back to fs.access() so
+   * Windows App Execution Aliases can still be treated as executable.
+   * If this is not set, then attempting to check the executable-ness
+   * of a nonexistent file will raise ENOENT, for example.
    */
   ignoreErrors?: boolean
 
