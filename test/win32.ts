@@ -1,4 +1,6 @@
 import { dirname, delimiter } from 'node:path'
+import * as fs from 'node:fs'
+import * as fsPromises from 'node:fs/promises'
 import t from 'tap'
 import { isexe, sync } from '../src/win32.js'
 
@@ -60,6 +62,149 @@ t.test('custom pathExt option', async t => {
   t.equal(sync(ours, opts), false)
   t.equal(sync(mine, opts), false)
   t.equal(sync(fail, opts), true)
+})
+
+t.test('windows app execution aliases', async t => {
+  const eacces = Object.assign(new Error('EACCES'), {
+    code: 'EACCES',
+  }) as NodeJS.ErrnoException
+  const eperm = Object.assign(new Error('EPERM'), {
+    code: 'EPERM',
+  }) as NodeJS.ErrnoException
+  const eio = Object.assign(new Error('EIO'), {
+    code: 'EIO',
+  }) as NodeJS.ErrnoException
+
+  const denied = new Set<string>([meow, fail])
+
+  const { isexe: isexeDenied, sync: syncDenied } = await t.mockImport<
+    typeof import('../src/win32.js')
+  >('../src/win32.js', {
+    'node:fs': {
+      ...fs,
+      statSync: (path: string) => {
+        if (denied.has(path)) throw eacces
+        return fs.statSync(path)
+      },
+    },
+    'node:fs/promises': {
+      ...fsPromises,
+      stat: async (path: string) => {
+        if (denied.has(path)) throw eacces
+        return fsPromises.stat(path)
+      },
+    },
+  })
+
+  t.equal(await isexeDenied(meow), true, 'EACCES + access + pathext')
+  t.equal(syncDenied(meow), true, 'sync EACCES + access + pathext')
+  t.equal(
+    await isexeDenied(fail),
+    false,
+    'EACCES + access but extension not executable',
+  )
+  t.equal(syncDenied(fail), false)
+
+  const { isexe: isexePerm, sync: syncPerm } = await t.mockImport<
+    typeof import('../src/win32.js')
+  >('../src/win32.js', {
+    'node:fs': {
+      ...fs,
+      statSync: (path: string) => {
+        if (path === meow) throw eperm
+        return fs.statSync(path)
+      },
+    },
+    'node:fs/promises': {
+      ...fsPromises,
+      stat: async (path: string) => {
+        if (path === meow) throw eperm
+        return fsPromises.stat(path)
+      },
+    },
+  })
+
+  t.equal(await isexePerm(meow), true, 'EPERM + access + pathext')
+  t.equal(syncPerm(meow), true)
+
+  const missing = meow + '.missing'
+  const { isexe: isexeMissing, sync: syncMissing } = await t.mockImport<
+    typeof import('../src/win32.js')
+  >('../src/win32.js', {
+    'node:fs': {
+      ...fs,
+      statSync: (path: string) => {
+        if (path === missing) throw eacces
+        return fs.statSync(path)
+      },
+    },
+    'node:fs/promises': {
+      ...fsPromises,
+      stat: async (path: string) => {
+        if (path === missing) throw eacces
+        return fsPromises.stat(path)
+      },
+    },
+  })
+
+  t.equal(
+    await isexeMissing(missing),
+    false,
+    'EACCES then access ENOENT is not executable',
+  )
+  t.equal(syncMissing(missing), false)
+  t.equal(await isexeMissing(missing, { ignoreErrors: true }), false)
+  t.equal(syncMissing(missing, { ignoreErrors: true }), false)
+
+  const { isexe: isexeIO, sync: syncIO } = await t.mockImport<
+    typeof import('../src/win32.js')
+  >('../src/win32.js', {
+    'node:fs': {
+      ...fs,
+      statSync: () => {
+        throw eio
+      },
+    },
+    'node:fs/promises': {
+      ...fsPromises,
+      stat: async () => {
+        throw eio
+      },
+    },
+  })
+
+  await t.rejects(isexeIO(meow), { code: 'EIO' })
+  t.throws(() => syncIO(meow), { code: 'EIO' })
+  t.equal(await isexeIO(meow, { ignoreErrors: true }), false)
+  t.equal(syncIO(meow, { ignoreErrors: true }), false)
+
+  const { isexe: isexeAccessIO, sync: syncAccessIO } = await t.mockImport<
+    typeof import('../src/win32.js')
+  >('../src/win32.js', {
+    'node:fs': {
+      ...fs,
+      statSync: () => {
+        throw eacces
+      },
+      accessSync: () => {
+        throw eio
+      },
+    },
+    'node:fs/promises': {
+      ...fsPromises,
+      stat: async () => {
+        throw eacces
+      },
+      access: async () => {
+        throw eio
+      },
+    },
+  })
+
+  await t.rejects(isexeAccessIO(meow), { code: 'EIO' })
+  t.throws(() => syncAccessIO(meow), { code: 'EIO' })
+  t.equal(await isexeAccessIO(meow, { ignoreErrors: true }), false)
+  t.equal(syncAccessIO(meow, { ignoreErrors: true }), false)
 })
 
 t.test('empty pathext entry means everything executable', async t => {
